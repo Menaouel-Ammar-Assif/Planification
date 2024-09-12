@@ -1,0 +1,889 @@
+<?php
+
+namespace App\Http\Controllers;
+use App\Models\User;
+use App\Models\Direction;
+use App\Models\UsersBlocked;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use App\Models\Role;
+use App\Models\Volet;
+use App\Models\Vda;
+use App\Models\Corre;
+use App\Models\Action;
+use App\Models\prioritaires;
+use App\Models\SousDirection;
+
+use App\Models\Objectif;
+use App\Models\ActionsCop;
+use App\Models\SousObjectif;
+use App\Models\Indicateur;
+use App\Models\ActionsPro;
+use App\Models\ActionsProDr;
+use App\Models\Bureau;
+use App\Models\Description;
+///////////////////////////////  add ///////////////////////////
+use App\Models\ActCopDrInd;
+use App\Models\ActionsCopDr;
+///////////////////////////////  add ///////////////////////////
+
+/////////////////////////// Report ////////////////////////////////}}}}))
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Maatwebsite\Excel\Facades\Excel;
+use App\Exports\ActionsExport;
+use Barryvdh\Snappy\Facades\SnappyPdf as PDF;
+////////////////////////////////////////////////////////////////////
+
+use Carbon\Carbon;
+
+
+////////////////////////// pdf Download ////////////////////////////
+use Dompdf\Dompdf;
+////////////////////////////////////////////////////////////////////
+
+
+class AdminController extends Controller
+{
+    //////////////////////////////////////////////////Admin Dashboard////////////////////////////////////////////////////////////
+    public function AdminDashboard(Request $request)
+    {
+        $DateY = date('Y');
+        $DateM = date('m');
+        $currentDate = date('Y-m');
+        $curDate = date('Y-m-d');
+
+        $directionsDc = Direction::where('type_dir', 'dc')->orderBy('ordre')->get();
+        $directionsDr = Direction::where('type_dir', 'dr')->orderBy('id_dir')->get();
+        $request->validate([
+            'direction' => 'nullable|exists:directions,id_dir',
+        ]);
+        
+        $id_dirDc = $directionsDc->pluck('id_dir');
+        $id_dirDr = $directionsDr->pluck('id_dir');
+
+        $id_actDc= Vda::whereIn('id_dc', $id_dirDc)->pluck('id_act');
+        $id_actDr= Vda::whereIn('id_dr', $id_dirDr)->pluck('id_act');
+
+        $actionsDc = Action::whereIn('id_act', $id_actDc)->orderBy('id_act')->get();
+        $actionsDr = Action::whereIn('id_act', $id_actDr)->orderBy('id_act')->get();
+
+        $numActDc = $actionsDc->count();
+
+        $numActDr = $actionsDr->count();
+
+        $etatDc = $actionsDc->pluck('etat');
+        $etatDr = $actionsDr->pluck('etat');
+
+        $etatDcSum = $actionsDc->sum('etat');
+        $etatDrSum = $actionsDr->sum('etat');
+
+        if ($numActDc > 0 || $numActDr > 0) {
+                $AvancementDc = ($etatDcSum / $numActDc) ;
+                $AvancementDr = ($etatDrSum / $numActDr) ;
+                $AvancementD = ($AvancementDc + $AvancementDr)/2 ;
+                $AvancementDc = number_format($AvancementDc, 2, '.', '');
+                $AvancementDr = number_format($AvancementDr, 2, '.', '');
+                $AvancementD = number_format($AvancementD, 2, '.', '');
+        }else{
+        }
+        $actIdDc = $actionsDc->pluck('id_act')->toArray();
+        $actIdDr = $actionsDr->pluck('id_act')->toArray();
+
+        $descDc = Description::whereIn('id_act', $actIdDc)->get();
+        $descDr = Description::whereIn('id_act', $actIdDr)->get();
+
+        $actions = Action::orderBy('id_act')->get();
+
+        $numActions = $actions->count();
+        // actions terminnes
+        $etatTerm = $actions->where('etat', '100')->count();
+        $etatTermDC = $actionsDc->where('etat', '100')->count();
+        $etatTermDR = $actionsDr->where('etat', '100')->count();
+        // actions retardées
+        $etatRet = $actions->filter(function($action) use ($curDate) {
+            $actionDate = date('Y-m-d', strtotime($action->df));
+            return $action->etat !== 100 && $actionDate < $curDate;
+            })->count();
+
+        $etatRetDC = $actionsDc->filter(function($action) use ($curDate) {
+            $actionDate = date('Y-m-d', strtotime($action->df));
+            return $action->etat !== 100 && $actionDate < $curDate;
+        })->count();
+
+        $etatRetDR = $actionsDr->filter(function($action) use ($curDate) {
+            $actionDate = date('Y-m-d', strtotime($action->df));
+            return $action->etat !== 100 && $actionDate < $curDate;
+        })->count();
+
+        // actions en cours
+        $etatEnc = $numActions - ($etatTerm + $etatRet);
+        $etatEncDC = $numActDc - ($etatTermDC + $etatRetDC);
+        $etatEncDR = $numActDr - ($etatTermDR + $etatRetDR);
+
+        $totalEtatDc = $actions->sum('etat');
+
+
+        $prioritaires = prioritaires::orderBy('id_p')->get();
+        $nmbr_act_p= $prioritaires->count();
+        $id_p = $prioritaires->pluck('id_p');
+
+
+        $act_p = Action::whereNotNull('id_p')->orderBy('id_act')->get();
+        $id_act_p = $act_p->pluck('id_act');
+
+        $descriptions = Description::whereIn('id_act', $id_act_p)->orderBy('id_act')->get();
+
+        $nmbr_act_p_ = $act_p->count();
+        $etat_act_p_sum = $act_p->sum('etat');
+        if ($nmbr_act_p > 0) {
+                $avncmt_act_p = ($etat_act_p_sum / $nmbr_act_p_) ;
+                $avncmt_act_p = number_format($avncmt_act_p, 2, '.', '');
+
+        }else{
+            $avncmt_act_p = "0";
+        }
+
+        $act_p_term = $act_p->where('etat', '100')->count();
+        $act_p_ret = $act_p->filter(function($action) use ($curDate) {
+            $actionDate = date('Y-m-d', strtotime($action->df));
+            return $action->etat !== 100 && $actionDate < $curDate;
+        })->count();
+        $act_p_enc = $nmbr_act_p_ - ($act_p_term + $act_p_ret);
+
+        // Temps écoulé année
+        $currentDate = Carbon::now();
+        $startOfYear = Carbon::createFromFormat('Y-m-d H:i:s', $currentDate->format('Y') . '-01-01 00:00:00');
+        $totalDaysInYear = $startOfYear->diffInDays($startOfYear->copy()->endOfYear());
+        $daysElapsed = $startOfYear->diffInDays($currentDate);
+        $percentageElapsed = ($daysElapsed / $totalDaysInYear) * 100;
+        $percentageElapsed = number_format($percentageElapsed, 2, '.', '');
+
+
+        $data = [];
+        foreach ($id_p as $prioritairesId) {
+            $actions = prioritaires::find($prioritairesId)->Action()->get();
+            $etat = $actions->sum('etat');
+            $act = $actions->count();
+            $m = $act > 0 ? $etat / $act : 0;
+            $data[] = [
+                'y' => $prioritairesId,
+                'a' => $m,
+                'b' => $percentageElapsed,
+            ];
+        }
+
+        $dataJson = json_encode($data);
+
+        //**************************************** COP *******************************************/
+        $datacop = Objectif::with('SousObjectif.ActionsCop.ActCopInd.Indicateur')->get();
+        $NbActCop = ActionsCop::select('id_act_cop')->count();
+        $objectifs= Objectif::orderBy('id_obj')->get();
+        $object= $objectifs->pluck('id_obj');
+
+        //**************************************** ACTIONS PROPOSEES *******************************************/
+
+        $actpro = [];
+
+        $actionsPro = ActionsPro::get();
+        $actionsProDr = ActionsProDr::get();
+
+        if ($actionsPro->count() > 0 && $actionsProDr->count() > 0) 
+        {
+            foreach ($actionsPro as $actproItem) 
+            {
+                foreach ($actionsProDr as $actprolib) 
+                {
+                    if ($actproItem->id_act_pro == $actprolib->id_act_pro) 
+                    {
+                        $actpro[] = 
+                        [
+                            'structure' => $actprolib->lib_created_by,
+                            'action' => $actproItem->lib_act_pro,
+                            'dd' => $actproItem->dd,
+                            'df' => $actproItem->df,
+                            'dr' => $actprolib->lib_dir,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return view("admin.admin_dashboard")->with([
+            'directionsDc' => $directionsDc,
+                'directionsDr' => $directionsDr,
+                'AvancementDc' => $AvancementDc,
+                'AvancementDr' => $AvancementDr,
+                'AvancementD' => $AvancementD,
+                'numActDc' => $numActDc,
+
+                'descriptions' => $descriptions,
+                'prioritaires' => $prioritaires,
+                'nmbr_act_p' => $nmbr_act_p,
+                'nmbr_act_p_' => $nmbr_act_p_,
+                'id_p' => $id_p,
+                'act_p' => $act_p,
+                'datePercentage' => $percentageElapsed,
+                'avncmt_act_p' => $avncmt_act_p,
+
+                'act_p_term' => $act_p_term,
+                'act_p_ret' => $act_p_ret,
+                'act_p_enc' => $act_p_enc,
+
+                'numActDr' => $numActDr,
+                'numActions' => $numActions,
+                'etatTerm' => $etatTerm,
+                'etatTermDC' => $etatTermDC,
+                'etatTermDR' => $etatTermDR,
+                'etatRet' => $etatRet,
+                'etatRetDC' => $etatRetDC,
+                'etatRetDR' => $etatRetDR,
+                'etatEnc' => $etatEnc,
+                'etatEncDC' => $etatEncDC,
+                'etatEncDR' => $etatEncDR,
+                'dataJson' => $dataJson,
+
+                'currentDate' =>$currentDate,
+                'descDc' =>$descDc,
+                'descDr' =>$descDr,
+                'actionsDc' => $actionsDc,
+                'actionsDr' => $actionsDr,
+
+                'datacop' => $datacop,
+                'NbActCop' => $NbActCop,
+                'objectifs'=> $objectifs,
+                'object'=> $object,
+                'actions'=> $actions,
+                'actpro'=> $actpro,
+        ]);
+    }
+
+
+
+    /////////////////////////////////////DC part///////////////////////////////////////
+   public function ajaxDc($directionId)
+   {
+       $curDate = date('Y-m-d');
+
+       if ($directionId == 'all'){ $id_act = Vda::whereNotNull('id_dc')->pluck('id_act');}
+       else { $id_act = Vda::where('id_dc', $directionId)->pluck('id_act');}
+
+       $actionsDc = Action::whereIn('id_act', $id_act)->orderBy('id_act')->get();
+
+
+
+       $numActionsDc = $actionsDc->count();
+
+       // actions terminnes ///////////////////////////////////////////////
+       $etatTermDc = $actionsDc->where('etat', '100')->count();
+
+       // actions retardées ///////////////////////////////////////////////
+       $etatRetDc = $actionsDc->filter(function($action) use ($curDate) {
+           $actionDate = date('Y-m-d', strtotime($action->df));
+           return $action->etat !== 100 && $actionDate < $curDate;
+       })->count();
+
+       // actions en cours ///////////////////////////////////////////////
+       $etatEncDc = $numActionsDc - ($etatTermDc + $etatRetDc);
+
+       //totale des avancement des direction Centrale ////////////////////
+       $totalEtatDc = $actionsDc->sum('etat');
+       $AvncmDc = $totalEtatDc / $numActionsDc;
+
+       ///////////////////////// START TEMP ECOLE ////////////////////////////////
+
+       $currentDate = Carbon::now();
+       $startOfYear = Carbon::createFromFormat('Y-m-d H:i:s', $currentDate->format('Y') . '-01-01 00:00:00');
+       $totalDaysInYear = $startOfYear->diffInDays($startOfYear->copy()->endOfYear());
+       $daysElapsed = $startOfYear->diffInDays($currentDate);
+       $datePercentageDc = ($daysElapsed / $totalDaysInYear) * 100;
+       $datePercentageDc = number_format($datePercentageDc, 2, '.', '');
+
+       
+       ///////////////////////// END TEMP ECOLE //////////////////////////////////
+
+       // directions dc for lib
+       $directionsDc = Direction::where('type_dir', 'dc')->orderBy('id_dir')->get();
+
+       return response()->json([
+                   'actionsDc' => $actionsDc,
+                   'etatTermDc' => $etatTermDc,
+                   'etatRetDc' => $etatRetDc,
+                   'etatEncDc' => $etatEncDc,
+                   'numActionsDc'=> $numActionsDc,
+                   'AvncmDc' =>  $AvncmDc,
+                   'datePercentageDc'=>$datePercentageDc,
+                   'directionsDc'=>$directionsDc,
+               ]);
+   }
+
+   public function btnDC($directionId,$idbtn)
+   {
+       $curDate = date('Y-m-d');
+       $DateY = date('Y');
+       $DateM = date('m');
+
+       if ($directionId == 'all'){ $id_act = Vda::whereNotNull('id_dc')->pluck('id_act');}
+       else { $id_act = Vda::where('id_dc', $directionId)->pluck('id_act');}
+
+       $actions = Action::whereIn('id_act', $id_act);
+
+       if($idbtn=='E')
+       {
+           $actionsFiltre = $actions->where(function ($query) use ($curDate){
+               $query->whereNull('etat')->where('df', '>', $curDate)
+                   ->orWhere('etat', '!=', '100')->where('df', '>', $curDate);
+           })->orderBy('id_act')->get();
+       }
+       elseif($idbtn=='T')
+       {
+           $actionsFiltre = $actions->where('etat', '100')->orderBy('id_act')->get();
+       }
+       elseif($idbtn=='R')
+       {
+           $actionsFiltre = $actions->where(function ($query) use ($curDate){
+               $query->whereNull('etat')->where('df', '<', $curDate)
+                   ->orWhere('etat', '!=', '100')->where('df', '<', $curDate);
+           })->orderBy('id_act')->get();
+
+       }
+       else
+       {
+           $actionsFiltre = $actions->orderBy('id_act')->get();
+       }
+
+       $directionsDc = Direction::where('type_dir', 'dc')->orderBy('id_dir')->get();
+
+
+       return response()->json([
+           'actionsFiltre' => $actionsFiltre,
+           'directionsDc'=>$directionsDc,
+
+       ]);
+   }
+
+   public function DownDC($IdSelect, $Name)
+    {
+
+        $curDate = date('Y-m-d');
+        $directionId = $IdSelect;
+        $idbtn = $Name;
+
+
+        if ($directionId == 'all')
+        {
+            $id_act = Vda::whereNotNull('id_dc')->pluck('id_act');
+            $directionName = Direction::where('type_dir', 'dc')->get();
+            $array = true;
+        }
+        else
+        {
+            $id_act = Vda::where('id_dc', $directionId)->pluck('id_act');
+            $directionName = Direction::where('id_dir', $directionId)->get();
+            $array = false;
+        }
+
+        $actions = Action::whereIn('id_act', $id_act);
+
+        if($idbtn=='DE')
+        {
+            $actionsFiltre = $actions->where(function ($query) use ($curDate){
+                $query->whereNull('etat')->where('df', '>', $curDate)
+                    ->orWhere('etat', '!=', '100')->where('df', '>', $curDate);
+            })->orderBy('id_act')->get();
+
+            $etat = 'Actions_En_cours';
+        }
+        elseif($idbtn=='DT')
+        {
+            $actionsFiltre = $actions->where('etat', '100')->orderBy('id_act')->get();
+
+            $etat = 'Actions_Finalisée';
+        }
+        elseif($idbtn=='DR')
+        {
+            $actionsFiltre = $actions->where(function ($query) use ($curDate){
+                $query->whereNull('etat')->where('df', '<', $curDate)
+                    ->orWhere('etat', '!=', '100')->where('df', '<', $curDate);
+            })->orderBy('id_act')->get();
+
+            $etat = 'Actions_Echues';
+
+        }
+        else
+        {
+            $actionsFiltre = $actions->orderBy('id_act')->get();
+            $etat = 'Toutes_Les_Actions';
+        }
+
+
+        if ($array)
+        {
+            $fileName = $etat.'_Structure_Centrales.xlsx';
+        }
+        else
+        {
+            $fileName = $etat.'_'.$directionName->pluck('lib_dir')->first().'.xlsx';
+        }
+
+        Excel::store(new ActionsExport($actionsFiltre, $directionName), $fileName, 'public');
+
+        return response()->download(Storage::disk('public')->path($fileName), $fileName,
+        [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
+        ]);
+    }
+
+    public function collection()
+    {
+        return Action::get();
+    }
+////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////DR part///////////////////////////////////////
+   public function ajaxDr($directionId)
+   {
+       $curDate = date('Y-m-d');
+
+       if ($directionId == 'all'){ $id_act = Vda::whereNotNull('id_dr')->pluck('id_act');}
+       else { $id_act = Vda::where('id_dr', $directionId)->pluck('id_act');}
+
+       $actionsDr = Action::whereIn('id_act', $id_act)->orderBy('id_act')->get();
+
+       $numActionsDr = $actionsDr->count();
+
+       // actions terminnes ///////////////////////////////////////////////
+       $etatTermDr = $actionsDr->where('etat', '100')->count();
+
+       // actions retardées ///////////////////////////////////////////////
+       $etatRetDr = $actionsDr->filter(function($action) use ($curDate) {
+           $actionDate = date('Y-m-d', strtotime($action->df));
+           return $action->etat !== 100 && $actionDate < $curDate;
+       })->count();
+
+       // actions en cours ///////////////////////////////////////////////
+       $etatEncDr = $numActionsDr - ($etatTermDr + $etatRetDr);
+
+       //totale des avancement des direction Centrale ////////////////////
+       $totalEtatDr = $actionsDr->sum('etat');
+       $AvncmDr = $totalEtatDr / $numActionsDr;
+       $directionsDr = Direction::where('type_dir', 'dr')->orderBy('id_dir')->get();
+
+
+
+       return response()->json([
+                   'actionsDr' => $actionsDr,
+                   'etatTermDr' => $etatTermDr,
+                   'etatRetDr' => $etatRetDr,
+                   'etatEncDr' => $etatEncDr,
+                   'numActionsDr'=> $numActionsDr,
+                   'AvncmDr' =>  $AvncmDr,
+                   'directionsDr'=>$directionsDr,
+               ]);
+   }
+
+   public function btnDR($directionId,$idbtn)
+   {
+       $curDate = date('Y-m-d');
+
+       if ($directionId == 'all'){ $id_act = Vda::whereNotNull('id_dr')->pluck('id_act');}
+       else { $id_act = Vda::where('id_dr', $directionId)->pluck('id_act');}
+
+       $actions = Action::whereIn('id_act', $id_act);
+
+       if($idbtn=='E')
+       {
+           $actionsFiltre = $actions->where(function ($query) use ($curDate){
+               $query->whereNull('etat')->where('df', '>', $curDate)
+                   ->orWhere('etat', '!=', '100')->where('df', '>=', $curDate);
+           })->orderBy('id_act')->get();
+       }
+       elseif($idbtn=='T')
+       {
+           $actionsFiltre = $actions->where('etat', '100')->orderBy('id_act')->get();
+       }
+       elseif($idbtn=='R')
+       {
+           $actionsFiltre = $actions->where(function ($query) use ($curDate){
+               $query->whereNull('etat')->where('df', '<', $curDate)
+                   ->orWhere('etat', '!=', '100')->where('df', '<', $curDate);
+           })->orderBy('id_act')->get();
+       }
+       else
+       {
+           $actionsFiltre = $actions->orderBy('id_act')->get();
+       }
+
+       $directionsDr = Direction::where('type_dir', 'dr')->orderBy('id_dir')->get();
+
+
+
+           return response()->json([
+               'actionsFiltre' => $actionsFiltre,
+               'directionsDr'=>$directionsDr,
+
+           ]);
+   }
+
+   public function DownDR($IdSelect, $Name)
+   {
+
+       $curDate = date('Y-m-d');
+       $directionId = $IdSelect;
+       $idbtn = $Name;
+
+
+       if ($directionId == 'all')
+       {
+           $id_act = Vda::whereNotNull('id_dr')->pluck('id_act');
+           $directionName = Direction::where('type_dir', 'dr')->get();
+           $array = true;
+       }
+       else
+       {
+           $id_act = Vda::where('id_dr', $directionId)->pluck('id_act');
+           $directionName = Direction::where('id_dir', $directionId)->get();
+           $array = false;
+       }
+
+       $actions = Action::whereIn('id_act', $id_act);
+
+       if($idbtn=='DE')
+       {
+           $actionsFiltre = $actions->where(function ($query) use ($curDate){
+               $query->whereNull('etat')->where('df', '>', $curDate)
+                   ->orWhere('etat', '!=', '100')->where('df', '>', $curDate);
+           })->orderBy('id_act')->get();
+
+           $etat = 'Actions_Encours';
+       }
+       elseif($idbtn=='DT')
+       {
+           $actionsFiltre = $actions->where('etat', '100')->orderBy('id_act')->get();
+
+           $etat = 'Actions_Terminées';
+       }
+       elseif($idbtn=='DR')
+       {
+           $actionsFiltre = $actions->where(function ($query) use ($curDate){
+               $query->whereNull('etat')->where('df', '<', $curDate)
+                   ->orWhere('etat', '!=', '100')->where('df', '<', $curDate);
+           })->orderBy('id_act')->get();
+
+           $etat = 'Actions_Retardées';
+
+       }
+       else
+       {
+           $actionsFiltre = $actions->orderBy('id_act')->get();
+           $etat = 'Toutes_Les_Actions';
+       }
+
+
+       if ($array)
+       {
+           $fileName = $etat.'_Directions_Régionales.xlsx';
+       }
+       else
+       {
+           $fileName = $etat.'_'.$directionName->pluck('lib_dir')->first().'.xlsx';
+       }
+
+       Excel::store(new ActionsExport($actionsFiltre, $directionName), $fileName, 'public');
+
+       return response()->download(Storage::disk('public')->path($fileName), $fileName,
+       [
+           'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+           'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
+       ]);
+   }
+////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////// Model Fiche ////////////////////////////////
+    public function downloadPDF()
+    {
+        $pdfPath = storage_path('app\public\Modèle_fiche_indicateur.pdf');
+        return response()->download($pdfPath, 'Modèle_fiche_indicateur.pdf');
+    }
+////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////// SUB ACTION PART  //////////////////////////////
+   public function subAction($id_act)
+   {
+       $info = Description::where('id_act', $id_act)->get();
+
+       return response()->json([ 'infos' => $info ]);
+
+   }
+////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////ACTIONS PROPOSEES///////////////////////////////////
+    public function AjaxCopDr($directionId)
+    {
+        if($directionId == 'all'){
+            $id_act_cop_dr = ActCopDrInd::pluck('id_act_cop_dr');
+
+        }
+        else{
+            $id_act_cop_dr = ActCopDrInd::where('created_by', $directionId)->pluck('id_act_cop_dr');
+
+        }
+    
+        $objectifs = Objectif::orderBy('id_obj')->get();
+        $sousobjectifs = SousObjectif::orderBy('id_sous_obj')->get();
+        $indicateursSelect = Indicateur::orderBy('id_ind')->get();
+        $directionsDr = Direction::where('type_dir', 'dr')->orderBy('id_dir')->get();
+
+
+        $data = [];
+
+        foreach ($objectifs as $objectif)
+        {
+            $sousObjectifs = SousObjectif::where('id_obj', $objectif->id_obj)->get();
+
+            foreach ($sousObjectifs as $sousObjectif) {
+                $actions = ActionsCopDr::where('id_sous_obj', $sousObjectif->id_sous_obj)->whereIn('id_act_cop_dr', $id_act_cop_dr)->get();
+
+                foreach ($actions as $action) {
+                    $indicateurs = $action->indicateurs;
+
+                    if ($indicateurs->isNotEmpty()) {
+                        $indicateursText = '';
+                        $formules = [];
+                
+                        foreach ($indicateurs as $indicateur) {
+                            // Append the indicator's name to the text
+                            $indicateursText .= $indicateur->lib_ind . ', ';
+                            
+                            // Store the formula in an array
+                            $formules[] = $indicateur->formule;
+                        }
+                
+                        // Remove the trailing comma and space
+                        $indicateursText = rtrim($indicateursText, ', ');
+                
+                        // Join the formulas with a separator
+                        $formulesText = implode(', ', $formules);
+                    } else {
+                        $indicateursText = '-';
+                        $formulesText = '-';
+                    }
+                
+                    $data[] = [
+                        'objectif' => $objectif->lib_obj,
+                        'sous_objectif' => $sousObjectif->lib_sous_obj,
+                        'action' => $action->lib_act_cop_dr,
+                        'date_debut' => $action->dd,
+                        'date_fin' => $action->df,
+                        'indicateurs' => $indicateursText,
+                        'formules' => $formulesText, // Add formules to the data array
+                        'id_act' => $action->id_act_cop_dr,
+                    ];
+                }
+            }
+
+
+
+        }
+
+        return response()->json([
+            'data' => $data,
+        ]);
+
+    }
+/////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////// function select ajust //////////////////////////////
+    public function ajaxDrAjust($directionDrId)
+    {
+        $actpro = [];
+        $actionsPro = ActionsPro::get();
+
+        if ($directionDrId=='all')
+        {
+            $actionsProDr = ActionsProDr::get();
+        }
+        else
+        {
+            $actionsProDr = ActionsProDr::where('id_dir', $directionDrId)->get();
+        }
+        
+
+        if ($actionsPro->count() > 0 && $actionsProDr->count() > 0) 
+        {
+            foreach ($actionsPro as $actproItem) 
+            {
+                foreach ($actionsProDr as $actprolib) 
+                {
+                    if ($actproItem->id_act_pro == $actprolib->id_act_pro) 
+                    {
+                        $actpro[] = 
+                        [
+                            'structure' => $actprolib->lib_created_by,
+                            'action' => $actproItem->lib_act_pro,
+                            'dd' => $actproItem->dd,
+                            'df' => $actproItem->df,
+                            'dr' => $actprolib->lib_dir,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return response()->json([
+            'actpro' => $actpro,
+            ]);
+    }
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    public function Users(){
+        $users = User::get();
+        $directions = Direction::OrderBy('id_dir')->get();
+
+        $usersBlockeds = UsersBlocked::get();
+        return view('admin.users',compact('users','directions','usersBlockeds'));
+    }
+
+    public function Add_user(Request $request)
+    {
+        $name = $request->input('name');
+        $email = $request->input('email');
+        $role = $request->input('role');
+        $password = $request->input('password');
+        $id_dir = $request->input('direction');
+
+        $existingUser = User::where('email', $email)->first();
+        if ($existingUser) {
+            return redirect()->route('admin.users')->with('warning-msg', 'L\'utilisateur existe déjà');
+        }
+
+       
+        User::create([
+            'name' => $name,
+            'email' => $email,
+            'role' => $role,
+            'password' => Hash::make($password),
+            'id_dir' => $id_dir,
+        ]);
+
+        return redirect()->route('admin.users')->with('success-msg', 'Utilisateur ajouté');
+    }
+
+
+
+    public function Delete_user($userId){
+
+        $user = User::findOrFail($userId);
+    $user->delete();
+
+    return redirect()->route('admin.users')->with('success-msg', 'Utilisateur supprimé avec succès');
+    }
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+    public function Block_user(Request $request,$userId)
+    {
+        $request->validate([
+            'userId' => 'required|exists:users,id',
+        ]);
+
+        $userId = $request->input('userId');
+
+        
+        if (UsersBlocked::where('id_user', $userId)->exists()) {
+            return redirect()->route('admin.users')->with('warning-msg', 'Compte Utilisateur déjà bloqué');
+        }
+
+        UsersBlocked::create([
+            'id_user' => $userId,
+        ]);
+
+        return redirect()->route('admin.users')->with('success-msg', 'Compte Utilisateur bloqué avec succès');
+    }
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+    public function Unblock_user(Request $request,$userId)
+    {
+        $request->validate([
+            'userId' => 'required|exists:usersBlockeds,id_user_blocked',
+        ]);
+
+        $userId = $request->input('userId');
+
+        
+        $blockedUser = UsersBlocked::where('id_user_blocked', $userId)->first();
+
+    if (!$blockedUser) {
+        return redirect()->route('admin.users')->with('warning-msg', 'Compte Utilisateur n\'est pas bloqué');
+    }
+
+    $blockedUser->delete();
+    return redirect()->route('admin.users')->with('success-msg', 'Compte Utilisateur débloqué avec succès');
+    }
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    public function Reset_user(Request $request, $userId)
+    {
+        $request->validate([
+            'userId' => 'required|exists:users,id', 
+            'passwordr' => 'required', 
+        ]);
+
+        $user = User::findOrFail($request->userId);
+
+        $user->password = Hash::make($request->input('passwordr'));
+        $user->save();
+
+        return redirect()->route('admin.users')->with('success-msg', 'Mot de passe réinitialisé avec succès');
+    }
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+    public function getDirections($dirId){
+
+        $id_dir = Direction::where('id_dir', $dirId)->pluck('id_dir');
+        $users = User::where('id_dir', $id_dir)->select('id','name','email')->get();
+        return json_encode($users);
+    }
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+    public function Actions (Request $request){
+        
+        $currentDate = date('Y-m');
+        $directionsDc = Direction::where('type_dir', 'dc')->orderBy('ordre')->get();
+        $directionsDr = Direction::where('type_dir', 'dr')->orderBy('id_dir')->get();
+        $request->validate([
+            'direction' => 'nullable|exists:directions,id_dir',
+        ]);
+        
+        $id_dirDc = $directionsDc->pluck('id_dir');
+        $id_dirDr = $directionsDr->pluck('id_dir');
+
+        $id_actDc= Vda::whereIn('id_dc', $id_dirDc)->pluck('id_act');
+        $id_actDr= Vda::whereIn('id_dr', $id_dirDr)->pluck('id_act');
+
+        $actionsDc = Action::whereIn('id_act', $id_actDc)->orderBy('id_act')->get();
+        $actionsDr = Action::whereIn('id_act', $id_actDr)->orderBy('id_act')->get();
+
+        
+        $actions = Action::orderBy('id_act')->get();
+
+    
+        return view("admin.actions")->with([
+                'directionsDc' => $directionsDc,
+                'directionsDr' => $directionsDr,
+                'currentDate' =>$currentDate,
+                'actionsDc' => $actionsDc,
+                'actionsDr' => $actionsDr,
+                'actions'=> $actions,
+        ]);
+    }
+}
